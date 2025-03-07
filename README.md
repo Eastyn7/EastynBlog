@@ -138,6 +138,19 @@ npx tsc --init
 },
 ~~~
 
+安装detenv，自行配置.env文件
+
+~~~bash
+npm install dotenv
+~~~
+
+~~~ini
+JWT_SECRET = your_secret_key
+DB_HOST = localhost
+DB_USER = root
+DB_PASS = yourpassword
+~~~
+
 初始化目录结构
 
 ~~~bash
@@ -183,7 +196,229 @@ app.listen(3307, () => {
 });
 ~~~
 
+### 配置跨域
 
+安装cors中间件
 
+~~~bash
+npm install cors
+npm install --save-dev @types/cors
+~~~
 
+在app.ts文件中引入
+
+~~~ts
+import cors from 'cors';
+app.use(cors());
+~~~
+
+### 连接数据库
+
+安装MySQL模块
+
+~~~bash
+npm install mysql
+npm install --save-dev @types/mysql
+~~~
+
+配置基础设置
+
+~~~ts
+/* src/db/index.ts */
+import mysql from 'mysql';
+
+const db = mysql.createPool({
+  host: '127.0.0.1',
+  user: '用户名',
+  password: '密码',
+  database: '数据库表名'
+});
+
+// 封装 db.query 为 Promise
+export const query = <T>(sql: string, values?: any): Promise<T> => {
+  return new Promise((resolve, reject) => {
+    db.query(sql, values, (error, results) => {
+      if (error) {
+        return reject(error);
+      }
+      resolve(results);
+    });
+  });
+};
+
+export default db;
+~~~
+
+### 响应处理中间件
+
+~~~ts
+/* src/utils/responseUtil.ts */
+import { Response, NextFunction } from 'express';
+
+interface ResponseFormat {
+  status: boolean;
+  message: string;
+  data?: any;
+  errorCode?: string;
+  details?: any;
+}
+
+/**
+ * 成功响应
+ * @param res Express Response 对象
+ * @param data 返回数据
+ * @param message 消息
+ * @param statusCode HTTP 状态码 (默认 200)
+ */
+export const successResponse = (res: Response, data?: any, message = 'Success', statusCode = 200) => {
+  const response: ResponseFormat = {
+    status: true,
+    message,
+    data
+  };
+  res.status(statusCode).json(response);
+};
+
+/**
+ * 失败响应
+ * @param res Express Response 对象
+ * @param message 错误消息
+ * @param statusCode HTTP 状态码 (默认 500)
+ * @param errorCode 自定义错误代码 (可选)
+ * @param details 额外错误信息 (可选)
+ */
+export const errorResponse = (
+  res: Response,
+  message: string,
+  statusCode = 500,
+  errorCode?: string,
+  details?: any
+) => {
+  const response: ResponseFormat = {
+    status: false,
+    message,
+    errorCode,
+    details
+  };
+  res.status(statusCode).json(response);
+};
+~~~
+
+~~~ts
+/* src/middlewares/errorHandler.ts */
+import { Request, Response, NextFunction } from 'express';
+import { errorResponse } from '../utils/responseUtil';
+
+/**
+ * 全局错误处理中间件
+ * @param err 错误对象
+ * @param req Express Request 对象
+ * @param res Express Response 对象
+ * @param next Express NextFunction
+ */
+export const errorHandler = (err: any, req: Request, res: Response, next: NextFunction) => {
+  console.error('[Error Handler]:', err);
+
+  // 解析错误信息
+  const statusCode = err.statusCode || 500; // 获取错误状态码，默认为500
+  const message = err.message || 'Internal Server Error'; // 默认错误消息
+  const errorCode = err.errorCode || 'UNKNOWN_ERROR'; // 自定义错误代码（可选）
+  const details = process.env.NODE_ENV === 'development' ? err.stack : undefined; // 仅在开发环境返回错误详情
+
+  // 统一响应错误
+  errorResponse(res, message, statusCode, errorCode, details);
+
+  next(); // 保持 Express 中间件兼容性
+};
+~~~
+
+### 身份鉴权中间件
+
+安装JWT库
+
+~~~bash
+npm install bcrypt jsonwebtoken
+npm install --save-dev @types/bcrypt @types/jsonwebtoken
+~~~
+
+编写函数
+
+~~~ts
+/* src/middlewares/authenticationMiddleware.ts */
+import jwt from 'jsonwebtoken';
+import { Request, Response, NextFunction } from 'express';
+
+// 使用环境变量存储 JWT 密钥
+const JWT_SECRET = process.env.JWT_SECRET || 'eastynBlogSecret';
+
+// 允许跳过 JWT 认证的路由
+const UNPROTECTED_PATH_REGEX = /^\/api\/public/;
+
+/**
+ * JWT 验证中间件
+ */
+export const authenticateToken = (req: Request, res: Response, next: NextFunction): any => {
+  // 允许跳过验证的路径
+  if (UNPROTECTED_PATH_REGEX.test(req.path)) {
+    return next();
+  }
+
+  // 从请求头获取 Authorization
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1]; // Bearer token
+
+  if (!token) {
+    return res.status(401).json({ message: '没有提供 Token，访问被拒绝' });
+  }
+
+  // 验证 token
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({ message: 'Token 无效' });
+    }
+
+    // 将解码后的用户信息存入 request 对象中
+    req.body.user = user;
+
+    // 获取用户请求体中的 user_id
+    const { user_id: requestAuthId } = req.body;
+    const { user_id: analysisId } = req.body.user;
+
+    // 比较解码出的 user_id 与请求中的 user_id 是否一致
+    if (analysisId !== requestAuthId) {
+      return res.status(403).json({ message: 'user_id 与 token 不匹配' });
+    }
+
+    next(); // 继续执行后续中间件或路由
+  });
+};
+
+/**
+ * JWT 验证中间件
+ * 特殊验证需求
+ */
+export const authenticateUser = (user_id: number, token: string): any => {
+  // 验证 token 并解析
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      throw new Error('token 无效');
+    }
+
+    const requestAuthId = user_id;
+    let analysisId: number;
+
+    if (user && typeof user === 'object' && 'user_id' in user) {
+      analysisId = user.user_id;
+    } else {
+      throw new Error('token 中不包含有效的 user_id');
+    }
+
+    if (analysisId !== requestAuthId) {
+      throw new Error('user_id 与 token 不匹配');
+    }
+
+    return true; // 如果验证通过，返回 true
+  });
+};
+~~~
 
