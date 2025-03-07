@@ -76,3 +76,114 @@ CREATE TABLE `post_favorites` (
 ) COMMENT='收藏表，记录访客的收藏行为';
 ~~~
 
+
+
+## 后端
+
+### 初始化
+
+初始化项目
+
+~~~bash
+npm init -y
+~~~
+
+安装Express框架
+
+~~~bash
+npm install express
+~~~
+
+安装 TypeScript、ts-node 以及 Express 的类型声明：
+
+~~~bash
+npm install --save-dev typescript ts-node @types/node @types/express
+~~~
+
+初始化TypeScript配置文件
+
+~~~bash
+npx tsc --init
+~~~
+
+~~~json
+/* tsconfig.json */
+{
+  "compilerOptions": {
+    "target": "es2016",
+    "module": "commonjs",
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "rootDir": "./src",
+    "outDir": "./dist"
+  },
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}
+~~~
+
+初始化项目启动指令
+
+~~~json
+/* package.json */  
+"scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "ts-node src/app.ts"
+},
+~~~
+
+初始化目录结构
+
+~~~bash
+D:.
+|   package-lock.json
+|   package.json
+|   tsconfig.json
+|
++---node_modules
+\---src
+    |   app.ts
+    |
+    +---controllers
+    +---db
+    +---middlewares
+    +---oss
+    +---routers
+        |   index.ts
+        |
+    +---services
+    +---types
+    \---utils
+~~~
+
+初始化app.ts项目主文件
+
+~~~tsx
+import express from 'express';
+import router from './routers/index';
+
+const app = express();
+
+// 中间件
+app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
+
+// 路由
+app.use('/api', router);
+
+// 启动服务器
+app.listen(3307, () => {
+  console.log('API server running at http://127.0.0.1:3307');
+});
+~~~
+
+
+
+
+
