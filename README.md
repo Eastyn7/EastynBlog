@@ -158,21 +158,22 @@ D:.
 |   package-lock.json
 |   package.json
 |   tsconfig.json
-|
-+---node_modules
+|   
 \---src
     |   app.ts
-    |
-    +---controllers
+    |   
     +---db
+    |       index.ts
+    |       
     +---middlewares
-    +---oss
+    |       authenticationMiddleware.ts
+    |       errorHandler.ts
+    |       
     +---routers
-        |   index.ts
-        |
-    +---services
-    +---types
+    |       index.ts
+    |
     \---utils
+            responseUtil.ts
 ~~~
 
 初始化app.ts项目主文件
