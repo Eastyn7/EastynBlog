@@ -134,6 +134,7 @@ npx tsc --init
 /* package.json */  
 "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "nodemon src/app.ts",
     "start": "ts-node src/app.ts"
 },
 ~~~
