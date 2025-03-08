@@ -334,7 +334,7 @@ export const errorHandler = (err: any, req: Request, res: Response, next: NextFu
 };
 ~~~
 
-### 身份鉴权中间件
+### JWT处理Token
 
 安装JWT库
 
@@ -343,18 +343,41 @@ npm install bcrypt jsonwebtoken
 npm install --save-dev @types/bcrypt @types/jsonwebtoken
 ~~~
 
+编写工具函数
+
+~~~ts
+/* src/utils/jwtUtils.ts */
+import jwt from 'jsonwebtoken';
+import dotenv from 'dotenv';
+
+dotenv.config();
+const SECRET_KEY = process.env.JWT_SECRET || 'eastynBlogSecret';
+
+export const generateToken = (payload: object, expiresIn: number = 43200): string => {
+  return 'Bearer ' + jwt.sign(payload, SECRET_KEY, { expiresIn });
+};
+
+export const verifyToken = (token: string): any => {
+  try {
+    return jwt.verify(token, SECRET_KEY);
+  } catch (error) {
+    return null;
+  }
+};
+~~~
+
+### 身份鉴权中间件
+
 编写函数
 
 ~~~ts
 /* src/middlewares/authenticationMiddleware.ts */
-import jwt from 'jsonwebtoken';
-import { Request, Response, NextFunction } from 'express';
-
-// 使用环境变量存储 JWT 密钥
-const JWT_SECRET = process.env.JWT_SECRET || 'eastynBlogSecret';
+import { Request, Response, NextFunction } from 'express'
+import { errorResponse } from '../utils/responseUtil'
+import { verifyToken } from '../utils/jwtUtils' // 引入封装的 JWT 验证方法
 
 // 允许跳过 JWT 认证的路由
-const UNPROTECTED_PATH_REGEX = /^\/api\/public/;
+const UNPROTECTED_PATH_REGEX = /^\/api\/public/
 
 /**
  * JWT 验证中间件
@@ -362,65 +385,360 @@ const UNPROTECTED_PATH_REGEX = /^\/api\/public/;
 export const authenticateToken = (req: Request, res: Response, next: NextFunction): any => {
   // 允许跳过验证的路径
   if (UNPROTECTED_PATH_REGEX.test(req.path)) {
-    return next();
+    return next()
   }
 
   // 从请求头获取 Authorization
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; // Bearer token
+  const authHeader = req.headers['authorization']
+  const token = authHeader?.split(' ')[1] // 提取 Bearer token
 
   if (!token) {
-    return res.status(401).json({ message: '没有提供 Token，访问被拒绝' });
+    return errorResponse(res, '没有提供 Token，访问被拒绝', 401) 
   }
 
   // 验证 token
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) {
-      return res.status(403).json({ message: 'Token 无效' });
-    }
+  const user = verifyToken(token)
+  if (!user) {
+    return errorResponse(res, 'Token 无效', 403)
+  }
 
-    // 将解码后的用户信息存入 request 对象中
-    req.body.user = user;
+  // 将解码后的用户信息存入 request 对象中
+  req.body.user = user
 
-    // 获取用户请求体中的 user_id
-    const { user_id: requestAuthId } = req.body;
-    const { user_id: analysisId } = req.body.user;
+  // 获取用户请求体中的 id
+  const { id: requestAuthId } = req.body
+  const { id: analysisId } = user
 
-    // 比较解码出的 user_id 与请求中的 user_id 是否一致
-    if (analysisId !== requestAuthId) {
-      return res.status(403).json({ message: 'user_id 与 token 不匹配' });
-    }
+  // 比较解码出的 id 与请求中的 id 是否一致
+  if (analysisId !== requestAuthId) {
+    return errorResponse(res, 'id 与 token 不匹配', 403)
+  }
 
-    next(); // 继续执行后续中间件或路由
-  });
-};
+  next() // 继续执行后续中间件或路由
+}
 
 /**
- * JWT 验证中间件
- * 特殊验证需求
+ * JWT 用户验证
+ * 适合特殊情况验证
  */
-export const authenticateUser = (user_id: number, token: string): any => {
+export const authenticateUser = (id: number, token: string): boolean => {
   // 验证 token 并解析
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) {
-      throw new Error('token 无效');
+  const user = verifyToken(token)
+
+  if (!user) {
+    throw new Error('token 无效')
+  }
+
+  const analysisId = user.id
+
+  if (analysisId !== id) {
+    throw new Error('id 与 token 不匹配')
+  }
+
+  return true // 如果验证通过，返回 true
+}
+
+/**
+ * 权限控制中间件
+ * @param allowedRoles 允许访问该接口的角色列表
+ */
+export const authorizeRole = (...allowedRoles: string[]) => {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const user = req.body.user // 需要 `authenticateToken` 先执行，才能获取 `user`
+
+    if (!user || !allowedRoles.includes(user.role)) {
+      return errorResponse(res, '没有权限！', 403)
     }
 
-    const requestAuthId = user_id;
-    let analysisId: number;
+    next() // 继续执行后续中间件或路由
+  }
+}
+~~~
 
-    if (user && typeof user === 'object' && 'user_id' in user) {
-      analysisId = user.user_id;
-    } else {
-      throw new Error('token 中不包含有效的 user_id');
-    }
+### 用户相关工具
 
-    if (analysisId !== requestAuthId) {
-      throw new Error('user_id 与 token 不匹配');
-    }
+对密码进行加密和解密
 
-    return true; // 如果验证通过，返回 true
-  });
+~~~ts
+/* src/utils/passwordUtils.ts */
+import bcrypt from 'bcrypt';
+
+export const hashPassword = async (password: string): Promise<string> => {
+  return bcrypt.hash(password, 10);
 };
+
+export const comparePassword = async (password: string, hash: string): Promise<boolean> => {
+  return bcrypt.compare(password, hash);
+};
+~~~
+
+登录/注册表单验证中间件
+
+~~~ts
+/* src/middlewares/validateInput.ts */
+import { errorResponse } from '../utils/responseUtil';
+import { Request, Response, NextFunction } from 'express';
+
+// 验证注册请求
+export const validateRegistration = (req: Request, res: Response, next: NextFunction): void => {
+  const { username, email, password } = req.body;
+
+  if (!username) {
+    return errorResponse(res, '用户名不能为空！', 400);
+  }
+  if (!email) {
+    return errorResponse(res, '邮箱不能为空！', 400);
+  }
+
+  if (!password || password.length < 6 || !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password)) {
+    return errorResponse(res, '密码长度至少为6位，并且包含大小写字母和数字', 400);
+  }
+
+  // 验证通过，调用 next()
+  next();
+};
+
+// 验证登录请求
+export const validateLogin = (req: Request, res: Response, next: NextFunction): void => {
+  const { username, password } = req.body;
+
+  if (!username) {
+    return errorResponse(res, '用户名禁止为空！', 400);
+  }
+
+  if (!password) {
+    return errorResponse(res, '密码不能为空', 400);
+  }
+
+  // 验证通过，调用 next()
+  next();
+};
+~~~
+
+### 用户接口
+
+用户Service层
+
+~~~ts
+/* src/services/userService.ts */
+import { query } from '../db';
+import { User, UserRegister, UserLoginResponse, UpdateUserInfo } from '../types/index';
+import { generateToken } from '../utils/jwtUtils';
+import { hashPassword, comparePassword } from '../utils/passwordUtils';
+
+// 用户注册
+export const registerUser = async (username: string, email: string, password: string): Promise<UserRegister> => {
+  const existingUser = await query<User[]>('SELECT * FROM users WHERE username = ? OR email = ?', [username, email]);
+  if (existingUser.length > 0) {
+    throw new Error('用户名或邮箱已存在');
+  }
+
+  const passwordHash = await hashPassword(password);
+  const result = await query<{ insertId: number }>('INSERT INTO users (username, password, email) VALUES (?, ?, ?)', [username, passwordHash, email]);
+  return { id: result.insertId, username, email };
+};
+
+// 用户登录
+export const loginUser = async (username: string, password: string): Promise<UserLoginResponse> => {
+  const users = await query<User[]>('SELECT * FROM users WHERE username = ?', [username]);
+  if (users.length === 0) {
+    throw new Error('用户不存在');
+  }
+
+  const user = users[0];
+  const isValidPassword = await comparePassword(password, user.password);
+  if (!isValidPassword) {
+    throw new Error('密码错误');
+  }
+
+  const token = generateToken({ id: user.id, username: user.username, role: user.role });
+  return { id: user.id, username: user.username, email: user.email, role: user.role, token };
+};
+
+// 获取所有用户信息
+export const getUsersInfo = async (): Promise<User[]> => {
+  return query<User[]>('SELECT id, username, email, role, create_time, update_time FROM users');
+};
+
+// 获取单个用户信息
+export const getUserInfo = async (id: number): Promise<User> => {
+  const userInfo = await query<User[]>(
+    `SELECT 
+      id, username, email, role
+     FROM users
+     WHERE id = ?`,
+    [id]
+  );
+
+  if (userInfo.length === 0) {
+    throw new Error('用户信息不存在');
+  }
+
+  // 返回用户的详细信息
+  return userInfo[0];
+};
+
+// 更新用户信息
+export const updateUserInfo = async (id: number, updates: UpdateUserInfo): Promise<string> => {
+  const fields = Object.keys(updates).map(key => `${key} = ?`).join(', ');
+  const values = Object.values(updates);
+  if (!fields) {
+    throw new Error('没有可更新的字段');
+  }
+  values.push(id);
+  const result = await query<{ affectedRows: number }>(`UPDATE users SET ${fields} WHERE id = ?`, values);
+  return result.affectedRows > 0 ? '更新成功' : '用户不存在或无更改';
+};
+
+// 删除用户
+export const deleteUser = async (id: number): Promise<string> => {
+  const result = await query<{ affectedRows: number }>('DELETE FROM users WHERE id = ?', [id]);
+  return result.affectedRows > 0 ? '删除成功' : '用户不存在';
+};
+~~~
+
+用户Controller层
+
+~~~ts
+/* src/controller/userController.ts */
+import { successResponse, errorResponse } from '../utils/responseUtil'
+import { Request, Response } from 'express'
+import * as userService from '../services/userService'
+
+// 用户注册
+export const registerUser = async (req: Request, res: Response): Promise<void> => {
+  const { username, email, password } = req.body
+
+  try {
+    const newUser = await userService.registerUser(username, email, password)
+    successResponse(res, newUser, '用户注册成功', 201)
+  } catch (error) {
+    if (error instanceof Error) {
+      errorResponse(res, error.message, 400)
+    } else {
+      errorResponse(res, "服务器内部错误", 500)
+    }
+  }
+}
+
+// 用户登录
+export const loginUser = async (req: Request, res: Response): Promise<void> => {
+  const { username, password } = req.body
+
+  try {
+    const userLogin = await userService.loginUser(username, password)
+    successResponse(res, { userLogin }, '登录成功', 200)
+  } catch (error) {
+    if (error instanceof Error) {
+      errorResponse(res, error.message, 400)
+    } else {
+      errorResponse(res, "服务器内部错误", 500)
+    }
+  }
+}
+
+// 获取所有用户信息
+export const getUsersInfo = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const usersInfo = await userService.getUsersInfo()
+    successResponse(res, { usersInfo }, '获取信息成功', 200)
+  } catch (error) {
+    if (error instanceof Error) {
+      errorResponse(res, error.message, 400)
+    } else {
+      errorResponse(res, "服务器内部错误", 500)
+    }
+  }
+}
+
+// 获取单个用户信息
+export const getUserInfo = async (req: Request, res: Response): Promise<void> => {
+  const { id } = req.body
+
+  try {
+    const userInfo = await userService.getUserInfo(id)
+    successResponse(res, { userInfo }, '获取信息成功', 200)
+  } catch (error) {
+    if (error instanceof Error) {
+      errorResponse(res, error.message, 400)
+    } else {
+      errorResponse(res, "服务器内部错误", 500)
+    }
+  }
+}
+
+// 更新用户信息
+export const updateUserInfo = async (req: Request, res: Response): Promise<void> => {
+  const { id, updates } = req.body
+
+  try {
+    const result = await userService.updateUserInfo(id, updates)
+    successResponse(res, {}, result, 200)
+  } catch (error) {
+    if (error instanceof Error) {
+      errorResponse(res, error.message, 400)
+    } else {
+      errorResponse(res, "服务器内部错误", 500)
+    }
+  }
+}
+
+// 删除用户
+export const deleteUser = async (req: Request, res: Response): Promise<void> => {
+  const { id } = req.body
+
+  try {
+    const result = await userService.deleteUser(id)
+    successResponse(res, {}, result, 200)
+  } catch (error) {
+    if (error instanceof Error) {
+      errorResponse(res, error.message, 400)
+    } else {
+      errorResponse(res, "服务器内部错误", 500)
+    }
+  }
+}
+~~~
+
+用户路由层
+
+~~~ts
+/* src/routers/subRouters/publicRouter.ts */
+import { Router } from 'express'
+import { registerUser, loginUser } from '../../controllers/userController'
+import { validateRegistration, validateLogin } from '../../middlewares/validateInput'
+
+const router = Router()
+
+// 注册路由
+router.post('/register', validateRegistration, registerUser)
+
+// 登录路由
+router.post('/login', validateLogin, loginUser)
+
+export default router
+~~~
+
+~~~ts
+/* src/routers/subRouters/userRouter.ts */
+import { Router } from 'express'
+import { authorizeRole } from '../../middlewares/authenticationMiddleware'
+import { getUsersInfo, getUserInfo, updateUserInfo, deleteUser } from '../../controllers/userController'
+
+const router = Router()
+
+// 获取所有用户信息
+router.post('/getusersinfo', authorizeRole('owner'), getUsersInfo)
+
+// 获取单个用户信息
+router.post('/getuserinfo', getUserInfo)
+
+// 更新用户信息
+router.put('/updateuserinfo', updateUserInfo)
+
+// 删除用户
+router.delete('/deleteuser', authorizeRole('owner'), deleteUser )
+
+export default router
 ~~~
 

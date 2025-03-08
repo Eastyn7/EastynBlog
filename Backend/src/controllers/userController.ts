@@ -1,6 +1,6 @@
 import { successResponse, errorResponse } from '../utils/responseUtil'
 import { Request, Response } from 'express'
-import * as userService from '../services/userServices'
+import * as userService from '../services/userService'
 
 // 用户注册
 export const registerUser = async (req: Request, res: Response): Promise<void> => {
