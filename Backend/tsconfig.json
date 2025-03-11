@@ -10,8 +10,9 @@
     "outDir": "./dist"
   },
   "include": [
-    "src/**/*"
-, "src/app.ts"  ],
+    "src/**/*",
+    "src/app.ts"
+  ],
   "exclude": [
     "node_modules"
   ]

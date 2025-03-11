@@ -1,20 +1,22 @@
 import { query } from '../db';
-import { Category } from '../types/index';
+import { Category, CreateCategory, UpdateCategory } from '../types/index';
+import { slugifyUtil } from '../utils/slugUtils';
 
 // 创建分类
-export const createCategory = async (name: string, slug: string, description: string): Promise<Category> => {
-  const result = await query<{ insertId: number }>('INSERT INTO categories (name, slug, description) VALUES (?, ?, ?)', [name, slug, description]);
-  return { id: result.insertId, name, slug, description };
+export const createCategory = async (name: string, description: string): Promise<CreateCategory> => {
+  const slug = slugifyUtil(name)
+  const result = await query<Category>('INSERT INTO categories (name, slug, description) VALUES (?, ?, ?)', [name, slug, description]);
+  return result;
 };
 
 // 获取所有分类
 export const getCategories = async (): Promise<Category[]> => {
-  return query<Category[]>('SELECT id, name, description FROM categories');
+  return query<Category[]>('SELECT id, name, slug, description FROM categories');
 };
 
 // 获取单个分类
 export const getCategory = async (id: number): Promise<Category> => {
-  const categories = await query<Category[]>('SELECT id, name, description FROM categories WHERE id = ?', [id]);
+  const categories = await query<Category[]>('SELECT id, name, slug, description FROM categories WHERE id = ?', [id]);
   if (categories.length === 0) {
     throw new Error('分类不存在');
   }
@@ -22,7 +24,15 @@ export const getCategory = async (id: number): Promise<Category> => {
 };
 
 // 更新分类
-export const updateCategory = async (id: number, updates: Partial<Category>): Promise<string> => {
+export const updateCategory = async (id: number, updates: UpdateCategory): Promise<string> => {
+  let newSlug;
+  if (updates.name) {
+    // 如果传入了 name 字段，重新生成 slug
+    newSlug = slugifyUtil(updates.name);
+    // 将新的 slug 添加到更新字段中
+    updates = { ...updates, slug: newSlug };
+  }
+
   const fields = Object.keys(updates).map(key => `${key} = ?`).join(', ');
   const values = Object.values(updates);
   if (!fields) {

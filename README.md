@@ -742,3 +742,183 @@ router.delete('/deleteuser', authorizeRole('owner'), deleteUser )
 export default router
 ~~~
 
+### Slug工具
+
+安装slugify库
+
+~~~bash
+pnpm install slugify
+~~~
+
+编写slugifyUtil工具函数
+
+~~~ts
+/* src/utils/slugUtils.ts */
+import slugify from 'slugify';
+import pinyin from 'pinyin';
+import crypto from 'crypto';
+
+export const slugifyUtil = (text: string): string => {
+  // 将中文转换为拼音数组
+  const pinyinArray = pinyin(text, { style: pinyin.STYLE_NORMAL });
+  // 将拼音数组展平并以空字符串连接
+  const pinyinText = pinyinArray.flat().join('');
+  // 利用 slugify 得到基础 slug（纯英文、小写）
+  const baseSlug = slugify(pinyinText, { lower: false, strict: true }).toUpperCase();
+
+  // 获取当前时间戳
+  const timestamp = new Date().getTime();
+  // 拼接原始字符串，包含 baseSlug、articleId 和 timestamp
+  const raw = `${baseSlug}${timestamp}`;
+
+  // 使用 SHA256 生成哈希，并截取前10位作为加密效果
+  const hash = crypto.createHash('sha256').update(raw).digest('hex').substring(0, 10);
+
+  // 返回最终 slug，例如：baseSlug-hash
+  return `${baseSlug}-${hash}`;
+};
+~~~
+
+### 分类接口
+
+分类Service层
+
+~~~ts
+/* src/services/categoryService.ts */
+import { query } from '../db';
+import { Category } from '../types/index';
+import { slugifyUtil } from '../utils/slugUtils';
+
+// 创建分类
+export const createCategory = async (name: string, description: string): Promise<Category> => {
+  const slug = slugifyUtil(name)
+  const result = await query<Category>('INSERT INTO categories (name, slug, description) VALUES (?, ?, ?)', [name, slug, description]);
+  return result;
+};
+
+// 获取所有分类
+export const getCategories = async (): Promise<Category[]> => {
+  return query<Category[]>('SELECT id, name, slug, description FROM categories');
+};
+
+// 获取单个分类
+export const getCategory = async (id: number): Promise<Category> => {
+  const categories = await query<Category[]>('SELECT id, name, slug, description FROM categories WHERE id = ?', [id]);
+  if (categories.length === 0) {
+    throw new Error('分类不存在');
+  }
+  return categories[0];
+};
+
+// 更新分类
+export const updateCategory = async (id: number, updates: Partial<Category>): Promise<string> => {
+  const fields = Object.keys(updates).map(key => `${key} = ?`).join(', ');
+  const values = Object.values(updates);
+  if (!fields) {
+    throw new Error('没有可更新的字段');
+  }
+  values.push(id);
+  const result = await query<{ affectedRows: number }>(`UPDATE categories SET ${fields} WHERE id = ?`, values);
+  return result.affectedRows > 0 ? '更新成功' : '分类不存在或无更改';
+};
+
+// 删除分类
+export const deleteCategory = async (id: number): Promise<string> => {
+  const result = await query<{ affectedRows: number }>('DELETE FROM categories WHERE id = ?', [id]);
+  return result.affectedRows > 0 ? '删除成功' : '分类不存在';
+};
+~~~
+
+分类Controller层
+
+~~~ts
+/* src/controller/categoryController.ts */
+import { successResponse, errorResponse } from '../utils/responseUtil';
+import { Request, Response } from 'express';
+import * as categoryService from '../services/categoryService';
+
+// 创建分类
+export const createCategory = async (req: Request, res: Response): Promise<void> => {
+  const { name, slug, description } = req.body;
+  try {
+    const newCategory = await categoryService.createCategory(name, description);
+    successResponse(res, { newCategory }, '分类创建成功', 201);
+  } catch (error) {
+    errorResponse(res, error instanceof Error ? error.message : '服务器内部错误', 500);
+  }
+};
+
+// 获取所有分类
+export const getCategories = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const categories = await categoryService.getCategories();
+    successResponse(res, { categories }, '获取分类成功', 200);
+  } catch (error) {
+    errorResponse(res, error instanceof Error ? error.message : '服务器内部错误', 500);
+  }
+};
+
+// 获取单个分类
+export const getCategory = async (req: Request, res: Response): Promise<void> => {
+  const { id } = req.body;
+  try {
+    const category = await categoryService.getCategory(id);
+    successResponse(res, { category }, '获取分类成功', 200);
+  } catch (error) {
+    errorResponse(res, error instanceof Error ? error.message : '服务器内部错误', 500);
+  }
+};
+
+// 更新分类
+export const updateCategory = async (req: Request, res: Response): Promise<void> => {
+  const { id, updates } = req.body;
+  try {
+    const result = await categoryService.updateCategory(id, updates);
+    successResponse(res, {}, result, 200);
+  } catch (error) {
+    errorResponse(res, error instanceof Error ? error.message : '服务器内部错误', 500);
+  }
+};
+
+// 删除分类
+export const deleteCategory = async (req: Request, res: Response): Promise<void> => {
+  const { id } = req.body;
+  try {
+    const result = await categoryService.deleteCategory(id);
+    successResponse(res, {}, result, 200);
+  } catch (error) {
+    errorResponse(res, error instanceof Error ? error.message : '服务器内部错误', 500);
+  }
+};
+~~~
+
+分类路由层
+
+~~~ts
+/* src/routers/subRouters/categoryRouter.ts */
+import { Router } from 'express';
+import { authorizeRole } from '../../middlewares/authenticationMiddleware';
+import { createCategory, getCategories, getCategory, updateCategory, deleteCategory } from '../../controllers/categoryController';
+
+const router = Router();
+
+// 创建分类
+router.post('/createcategory', authorizeRole('owner'), createCategory);
+
+// 获取所有分类
+router.post('/getcategories', getCategories);
+
+// 获取单个分类
+router.post('/getcategory', getCategory);
+
+// 更新分类
+router.put('/updatecategory', authorizeRole('owner'), updateCategory);
+
+// 删除分类
+router.delete('/deletecategory', authorizeRole('owner'), deleteCategory);
+
+export default router;
+~~~
+
+
+
